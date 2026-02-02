@@ -49,9 +49,7 @@
       position:absolute;
       left:0;
       top:0;
-      transform: translate(0,0);
       will-change: left, top;
-      /* IMPORTANT: no CSS transition, we animate ourselves */
     }
     .huzzah{
       font-size:56px;
@@ -72,166 +70,175 @@
   </div>
 
   <script>
-    const arena = document.getElementById("arena");
-    const noBtn = document.getElementById("no");
-    const yesBtn = document.getElementById("yes");
-    const card = document.getElementById("card");
+    (() => {
+      const arena = document.getElementById("arena");
+      const noBtn = document.getElementById("no");
+      const yesBtn = document.getElementById("yes");
+      const card  = document.getElementById("card");
 
-    // Button position and velocity in arena coordinates (pixels)
-    let x = 0, y = 0;
-    let vx = 0, vy = 0;
+      if (!arena || !noBtn || !yesBtn || !card) {
+        // If any IDs don't match, nothing will work.
+        console.error("Missing element: check ids arena/no/yes/card");
+        return;
+      }
 
-    // Cursor position in viewport coords
-    let mouseX = null, mouseY = null;
+      // Button position and velocity (pixels in arena coords)
+      let x = 0, y = 0;
+      let vx = 0, vy = 0;
 
-    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+      // Cursor position in viewport coords
+      let mouseX = null, mouseY = null;
 
-    function setPos(nx, ny) {
-      x = nx; y = ny;
-      noBtn.style.left = `${x}px`;
-      noBtn.style.top = `${y}px`;
-    }
+      let running = true;
+      let lastT = null;
 
-    function initPos() {
-      const a = arena.getBoundingClientRect();
-      const b = noBtn.getBoundingClientRect();
-      setPos((a.width - b.width) / 2, (a.height - b.height) / 2);
-      vx = 0; vy = 0;
-    }
+      function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-    function updateMouseFromEvent(clientX, clientY) {
-      mouseX = clientX;
-      mouseY = clientY;
-    }
+      function setPos(nx, ny) {
+        x = nx; y = ny;
+        noBtn.style.left = `${x}px`;
+        noBtn.style.top  = `${y}px`;
+      }
 
-    arena.addEventListener("mousemove", (e) => updateMouseFromEvent(e.clientX, e.clientY), { passive: true });
-    arena.addEventListener("touchmove", (e) => {
-      const t = e.touches[0];
-      updateMouseFromEvent(t.clientX, t.clientY);
-    }, { passive: true });
+      function initPos() {
+        const a = arena.getBoundingClientRect();
+        const b = noBtn.getBoundingClientRect();
+        setPos((a.width - b.width) / 2, (a.height - b.height) / 2);
+        vx = 0; vy = 0;
+      }
 
-    // Smooth physics-like animation
-    let lastT = null;
-    function tick(t) {
-      if (lastT === null) lastT = t;
-      // delta time in seconds, clamped for stability
-      const dt = clamp((t - lastT) / 1000, 0, 0.03);
-      lastT = t;
+      function updateMouse(clientX, clientY) {
+        mouseX = clientX;
+        mouseY = clientY;
+      }
 
-      const a = arena.getBoundingClientRect();
-      const b = noBtn.getBoundingClientRect();
+      arena.addEventListener("mousemove", (e) => updateMouse(e.clientX, e.clientY), { passive: true });
+      arena.addEventListener("touchmove", (e) => {
+        const t = e.touches[0];
+        updateMouse(t.clientX, t.clientY);
+      }, { passive: true });
 
-      // Arena bounds for top-left of button
-      const minX = 0;
-      const minY = 0;
-      const maxX = Math.max(0, a.width - b.width);
-      const maxY = Math.max(0, a.height - b.height);
+      function tick(t) {
+        if (!running) return;
 
-      // Current button centre in viewport coords
-      const btnCenterX = b.left + b.width / 2;
-      const btnCenterY = b.top + b.height / 2;
+        if (lastT === null) lastT = t;
+        const dt = clamp((t - lastT) / 1000, 0, 0.03);
+        lastT = t;
 
-      // Compute "push" away from cursor when close
-      let ax = 0, ay = 0;
+        const a = arena.getBoundingClientRect();
+        const b = noBtn.getBoundingClientRect();
 
-      const panicRadius = 160;   // how close before it reacts
-      const maxAccel = 2200;     // px/s^2 (lower = calmer)
-      const maxSpeed = 320;      // px/s  (lower = slower)
+        const minX = 0, minY = 0;
+        const maxX = Math.max(0, a.width - b.width);
+        const maxY = Math.max(0, a.height - b.height);
 
-      if (mouseX !== null && mouseY !== null) {
-        const dx = btnCenterX - mouseX;
-        const dy = btnCenterY - mouseY;
-        const dist = Math.hypot(dx, dy) || 1;
+        // Button centre in viewport coords
+        const btnCenterX = b.left + b.width / 2;
+        const btnCenterY = b.top  + b.height / 2;
 
-        if (dist < panicRadius) {
-          // Smooth ramp: 0 at edge of radius, 1 very close
-          const s = (panicRadius - dist) / panicRadius;
-          // Use s^2 for gentler response until very close
-          const strength = s * s;
+        // Smooth acceleration away from cursor
+        let ax = 0, ay = 0;
 
-          ax = (dx / dist) * (maxAccel * strength);
-          ay = (dy / dist) * (maxAccel * strength);
+        const panicRadius = 160; // reacts within this distance
+        const maxAccel = 1400;   // lower = calmer
+        const maxSpeed = 220;    // lower = slower
+
+        if (mouseX !== null && mouseY !== null) {
+          const dx = btnCenterX - mouseX;
+          const dy = btnCenterY - mouseY;
+          const dist = Math.hypot(dx, dy) || 1;
+
+          if (dist < panicRadius) {
+            const s = (panicRadius - dist) / panicRadius; // 0..1
+            const strength = s * s; // gentler ramp
+            ax = (dx / dist) * (maxAccel * strength);
+            ay = (dy / dist) * (maxAccel * strength);
+          }
+        }
+
+        // Damping for smooth glide
+        const damping = 10.0;
+        ax += -damping * vx;
+        ay += -damping * vy;
+
+        // Integrate
+        vx += ax * dt;
+        vy += ay * dt;
+
+        // Clamp speed
+        const sp = Math.hypot(vx, vy);
+        if (sp > maxSpeed) {
+          vx = (vx / sp) * maxSpeed;
+          vy = (vy / sp) * maxSpeed;
+        }
+
+        let nx = x + vx * dt;
+        let ny = y + vy * dt;
+
+        // Keep inside bounds with tiny bounce
+        const bounce = 0.2;
+        if (nx < minX) { nx = minX; vx = -vx * bounce; }
+        if (nx > maxX) { nx = maxX; vx = -vx * bounce; }
+        if (ny < minY) { ny = minY; vy = -vy * bounce; }
+        if (ny > maxY) { ny = maxY; vy = -vy * bounce; }
+
+        setPos(nx, ny);
+        requestAnimationFrame(tick);
+      }
+
+      function confetti() {
+        const colors = ["#ff5fa2", "#ffd1e6", "#ffffff", "#ff9ac6"];
+        const count = 180;
+
+        for (let i = 0; i < count; i++) {
+          const piece = document.createElement("div");
+          piece.style.position = "fixed";
+          piece.style.left = Math.random() * 100 + "vw";
+          piece.style.top = "-20px";
+          piece.style.width = "8px";
+          piece.style.height = "14px";
+          piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+          piece.style.opacity = "0.95";
+          piece.style.zIndex = "9999";
+          piece.style.borderRadius = "2px";
+          document.body.appendChild(piece);
+
+          const fall = window.innerHeight + 120;
+          const drift = (Math.random() - 0.5) * 320;
+          const rotate = Math.random() * 720;
+
+          piece.animate(
+            [
+              { transform: "translate(0,0) rotate(0deg)", top: "-20px" },
+              { transform: `translate(${drift}px,0) rotate(${rotate}deg)`, top: fall + "px" }
+            ],
+            {
+              duration: 1400 + Math.random() * 900,
+              easing: "cubic-bezier(.2,.8,.2,1)"
+            }
+          ).onfinish = () => piece.remove();
         }
       }
 
-      // Damping (friction) for smoothness
-      const damping = 10.0; // higher = more quickly settles
-      ax += -damping * vx;
-      ay += -damping * vy;
+      yesBtn.addEventListener("click", () => {
+        running = false; // stop the animation loop cleanly
+        card.remove();
 
-      // Integrate velocity and position
-      vx += ax * dt;
-      vy += ay * dt;
+        const h = document.createElement("div");
+        h.className = "huzzah";
+        h.textContent = "huzzah!";
+        document.body.appendChild(h);
 
-      // Clamp speed
-      const sp = Math.hypot(vx, vy);
-      if (sp > maxSpeed) {
-        vx = (vx / sp) * maxSpeed;
-        vy = (vy / sp) * maxSpeed;
-      }
+        confetti();
+      });
 
-      let nx = x + vx * dt;
-      let ny = y + vy * dt;
+      window.addEventListener("resize", initPos);
 
-      // Keep inside bounds, bounce slightly if it hits a wall
-      const bounce = 0.2;
-      if (nx < minX) { nx = minX; vx = -vx * bounce; }
-      if (nx > maxX) { nx = maxX; vx = -vx * bounce; }
-      if (ny < minY) { ny = minY; vy = -vy * bounce; }
-      if (ny > maxY) { ny = maxY; vy = -vy * bounce; }
-
-      setPos(nx, ny);
-
+      initPos();
       requestAnimationFrame(tick);
-    }
-
-    yesBtn.addEventListener("click", () => {
-  card.remove();
-
-  const h = document.createElement("div");
-  h.className = "huzzah";
-  h.textContent = "huzzah!";
-  document.body.appendChild(h);
-
-  // 🎉 CONFETTI 🎉
-  const colors = ["#ff5fa2", "#ffd1e6", "#ffffff", "#ff9ac6"];
-
-  for (let i = 0; i < 140; i++) {
-    const piece = document.createElement("div");
-
-    piece.style.position = "fixed";
-    piece.style.left = Math.random() * 100 + "vw";
-    piece.style.top = "-20px";
-    piece.style.width = "8px";
-    piece.style.height = "14px";
-    piece.style.background = colors[Math.floor(Math.random() * colors.length)];
-    piece.style.opacity = 0.9;
-    piece.style.zIndex = 9999;
-    piece.style.borderRadius = "2px";
-
-    document.body.appendChild(piece);
-
-    const fallDistance = window.innerHeight + 100;
-    const drift = (Math.random() - 0.5) * 300;
-    const rotate = Math.random() * 720;
-
-    piece.animate([
-      { transform: "translate(0,0) rotate(0deg)", top: "-20px" },
-      { transform: `translate(${drift}px, 0) rotate(${rotate}deg)`, top: fallDistance + "px" }
-    ], {
-      duration: 1400 + Math.random() * 900,
-      easing: "cubic-bezier(.2,.8,.2,1)"
-    }).onfinish = () => piece.remove();
-  }
-});
-
-    window.addEventListener("resize", initPos);
-
-    initPos();
-    requestAnimationFrame(tick);
+    })();
   </script>
 </body>
 </html>
-
 
 
