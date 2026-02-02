@@ -23,32 +23,35 @@
     h1{ margin:0 0 22px; color:#b4004e; font-size:32px; }
     .btns{
       position:relative;
-      height:90px; /* space for the runaway button */
+      height:110px;
       display:flex;
       align-items:center;
       justify-content:center;
       gap:18px;
+      overflow:hidden;
     }
     button{
       font-size:18px;
       padding:12px 22px;
       border-radius:12px;
-      border:0;
       cursor:pointer;
-      transition: transform .08s linear;
+      user-select:none;
     }
     #yes{
       background: var(--pink);
       color:#fff;
+      border:0;
     }
     #no{
       background:#fff;
       color:#b4004e;
       border:2px solid #ff9ac6;
-      position:absolute; /* we will move it around */
+      position:absolute;
       left:50%;
       top:50%;
       transform: translate(-50%, -50%);
+      will-change: left, top;
+      transition: left 80ms linear, top 80ms linear;
     }
     .msg{
       margin-top:18px;
@@ -63,7 +66,7 @@
     <h1>Will you be my valentine?</h1>
 
     <div class="btns" id="arena">
-      <button id="yes">Yes</button>
+      <button id="yes" type="button">Yes</button>
       <button id="no" type="button">No</button>
     </div>
 
@@ -76,58 +79,81 @@
     const yesBtn = document.getElementById("yes");
     const msg = document.getElementById("msg");
 
-    // Put "No" at a random spot inside the arena
-    function placeNoRandom() {
-      const a = arena.getBoundingClientRect();
-      const b = noBtn.getBoundingClientRect();
+    let noX = 0;
+    let noY = 0;
 
-      // padding so it stays inside nicely
-      const pad = 8;
-      const maxX = a.width - b.width - pad * 2;
-      const maxY = a.height - b.height - pad * 2;
-
-      const x = pad + Math.random() * Math.max(0, maxX);
-      const y = pad + Math.random() * Math.max(0, maxY);
-
-      noBtn.style.left = `${x}px`;
-      noBtn.style.top  = `${y}px`;
-      noBtn.style.transform = `translate(0,0)`;
+    function clamp(v, lo, hi) {
+      return Math.max(lo, Math.min(hi, v));
     }
 
-    // Run away when cursor gets close
-    function onMouseMove(e) {
+    function setNoPos(x, y) {
+      noX = x;
+      noY = y;
+      noBtn.style.left = `${noX}px`;
+      noBtn.style.top = `${noY}px`;
+      noBtn.style.transform = "translate(0,0)";
+    }
+
+    function initNoPos() {
+      const a = arena.getBoundingClientRect();
+      const b = noBtn.getBoundingClientRect();
+      const x = (a.width - b.width) / 2;
+      const y = (a.height - b.height) / 2;
+      setNoPos(x, y);
+    }
+
+    function moveAway(clientX, clientY) {
       const a = arena.getBoundingClientRect();
       const b = noBtn.getBoundingClientRect();
 
-      const mx = e.clientX;
-      const my = e.clientY;
-
       const bx = b.left + b.width / 2;
-      const by = b.top  + b.height / 2;
+      const by = b.top + b.height / 2;
 
-      const dx = mx - bx;
-      const dy = my - by;
+      const dx = bx - clientX;
+      const dy = by - clientY;
       const dist = Math.hypot(dx, dy);
 
-      // If mouse is within this many pixels of the "No" button, move it
-      const panicRadius = 90;
+      const panicRadius = 130;
 
       if (dist < panicRadius) {
-        placeNoRandom();
+        const strength = (panicRadius - dist) / panicRadius;
+        const speed = 12;
+
+        const ux = dx / (dist || 1);
+        const uy = dy / (dist || 1);
+
+        let nx = noX + ux * speed * strength;
+        let ny = noY + uy * speed * strength;
+
+        nx = clamp(nx, 0, a.width - b.width);
+        ny = clamp(ny, 0, a.height - b.height);
+
+        setNoPos(nx, ny);
       }
     }
 
-    // Start with a random position so it's not centered
-    placeNoRandom();
+    function onMouseMove(e) {
+      moveAway(e.clientX, e.clientY);
+    }
 
-    arena.addEventListener("mousemove", onMouseMove);
+    function onTouchMove(e) {
+      const t = e.touches[0];
+      moveAway(t.clientX, t.clientY);
+    }
+
+    arena.addEventListener("mousemove", onMouseMove, { passive: true });
+    arena.addEventListener("touchmove", onTouchMove, { passive: true });
 
     yesBtn.addEventListener("click", () => {
       msg.textContent = "YAY 💖";
-      // Optional: disable runaway so they can’t keep teasing it
       arena.removeEventListener("mousemove", onMouseMove);
+      arena.removeEventListener("touchmove", onTouchMove);
       noBtn.style.display = "none";
     });
+
+    window.addEventListener("resize", initNoPos);
+    initNoPos();
   </script>
 </body>
 </html>
+
