@@ -186,12 +186,44 @@
     }
 
     yesBtn.addEventListener("click", () => {
-      card.remove();
-      const h = document.createElement("div");
-      h.className = "huzzah";
-      h.textContent = "huzzah!";
-      document.body.appendChild(h);
-    });
+  card.remove();
+
+  const h = document.createElement("div");
+  h.className = "huzzah";
+  h.textContent = "huzzah!";
+  document.body.appendChild(h);
+
+  // 🎉 CONFETTI 🎉
+  const colors = ["#ff5fa2", "#ffd1e6", "#ffffff", "#ff9ac6"];
+
+  for (let i = 0; i < 140; i++) {
+    const piece = document.createElement("div");
+
+    piece.style.position = "fixed";
+    piece.style.left = Math.random() * 100 + "vw";
+    piece.style.top = "-20px";
+    piece.style.width = "8px";
+    piece.style.height = "14px";
+    piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+    piece.style.opacity = 0.9;
+    piece.style.zIndex = 9999;
+    piece.style.borderRadius = "2px";
+
+    document.body.appendChild(piece);
+
+    const fallDistance = window.innerHeight + 100;
+    const drift = (Math.random() - 0.5) * 300;
+    const rotate = Math.random() * 720;
+
+    piece.animate([
+      { transform: "translate(0,0) rotate(0deg)", top: "-20px" },
+      { transform: `translate(${drift}px, 0) rotate(${rotate}deg)`, top: fallDistance + "px" }
+    ], {
+      duration: 1400 + Math.random() * 900,
+      easing: "cubic-bezier(.2,.8,.2,1)"
+    }).onfinish = () => piece.remove();
+  }
+});
 
     window.addEventListener("resize", initPos);
 
