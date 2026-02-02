@@ -97,17 +97,28 @@
       const yesBtn = document.getElementById("yes");
       const card  = document.getElementById("card");
 
-      // No button physics
+      // Arena and button dimensions (cached, in px)
+      let aw = 0, ah = 0, bw = 0, bh = 0;
+
+      // No button position + velocity in arena coordinates (top-left)
       let x = 0, y = 0;
       let vx = 0, vy = 0;
 
-      // cursor pos (viewport)
-      let mouseX = null, mouseY = null;
+      // Mouse in arena coordinates
+      let mx = null, my = null;
 
       let running = true;
       let lastT = null;
 
       function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+      function measure() {
+        // Use offsetWidth/Height to avoid layout jitter from getBoundingClientRect per frame
+        aw = arena.clientWidth;
+        ah = arena.clientHeight;
+        bw = noBtn.offsetWidth;
+        bh = noBtn.offsetHeight;
+      }
 
       function setPos(nx, ny) {
         x = nx; y = ny;
@@ -116,84 +127,106 @@
       }
 
       function initPos() {
-        const a = arena.getBoundingClientRect();
-        const b = noBtn.getBoundingClientRect();
-        setPos((a.width - b.width) / 2, (a.height - b.height) / 2);
+        measure();
+        setPos((aw - bw) / 2, (ah - bh) / 2);
         vx = 0; vy = 0;
       }
 
-      function updateMouse(clientX, clientY) {
-        mouseX = clientX;
-        mouseY = clientY;
+      function updateMouseFromClient(clientX, clientY) {
+        const r = arena.getBoundingClientRect();
+        mx = clientX - r.left;
+        my = clientY - r.top;
       }
 
-      arena.addEventListener("mousemove", (e) => updateMouse(e.clientX, e.clientY), { passive: true });
+      arena.addEventListener("mousemove", (e) => updateMouseFromClient(e.clientX, e.clientY), { passive: true });
       arena.addEventListener("touchmove", (e) => {
         const t = e.touches[0];
-        updateMouse(t.clientX, t.clientY);
+        updateMouseFromClient(t.clientX, t.clientY);
       }, { passive: true });
 
+      // Smooth local flee: no bouncing, no teleporting
       function tick(t) {
         if (!running) return;
 
         if (lastT === null) lastT = t;
-        const dt = clamp((t - lastT) / 1000, 0, 0.03);
+        const dt = clamp((t - lastT) / 1000, 0, 0.025);
         lastT = t;
 
-        const a = arena.getBoundingClientRect();
-        const b = noBtn.getBoundingClientRect();
+        // Keep measurements fresh if fonts render differently, etc.
+        measure();
 
         const minX = 0, minY = 0;
-        const maxX = Math.max(0, a.width - b.width);
-        const maxY = Math.max(0, a.height - b.height);
+        const maxX = Math.max(0, aw - bw);
+        const maxY = Math.max(0, ah - bh);
 
-        const btnCenterX = b.left + b.width / 2;
-        const btnCenterY = b.top  + b.height / 2;
+        // Button center in arena coords
+        const cx = x + bw / 2;
+        const cy = y + bh / 2;
 
-        let ax = 0, ay = 0;
+        // Steering parameters
+        const panicRadius = 120;     // reacts when mouse closer than this
+        const maxSpeed = 120;        // px/s (kept low so it never rockets away)
+        const accel = 900;           // px/s^2
+        const damping = 12;          // velocity smoothing
+        const maxStep = 5;           // px per frame hard cap (prevents big jumps)
 
-        const panicRadius = 160;
-        const maxAccel = 1300;   // lower = calmer
-        const maxSpeed = 210;    // lower = slower
+        let targetVx = 0, targetVy = 0;
 
-        if (mouseX !== null && mouseY !== null) {
-          const dx = btnCenterX - mouseX;
-          const dy = btnCenterY - mouseY;
+        if (mx !== null && my !== null) {
+          const dx = cx - mx;
+          const dy = cy - my;
           const dist = Math.hypot(dx, dy) || 1;
 
           if (dist < panicRadius) {
-            const s = (panicRadius - dist) / panicRadius;
-            const strength = s * s; // smooth ramp
-            ax = (dx / dist) * (maxAccel * strength);
-            ay = (dy / dist) * (maxAccel * strength);
+            // Smooth ramp: small movement unless very close
+            const s = (panicRadius - dist) / panicRadius; // 0..1
+            const strength = s * s; // gentle until close
+
+            const ux = dx / dist;
+            const uy = dy / dist;
+
+            // Desired speed increases with closeness, but stays local
+            const desiredSpeed = maxSpeed * strength;
+
+            targetVx = ux * desiredSpeed;
+            targetVy = uy * desiredSpeed;
           }
         }
 
-        // damping (smooth glide)
-        const damping = 10.5;
-        ax += -damping * vx;
-        ay += -damping * vy;
+        // Move velocity toward target velocity smoothly
+        const dvx = targetVx - vx;
+        const dvy = targetVy - vy;
 
-        vx += ax * dt;
-        vy += ay * dt;
+        // Acceleration limit
+        const maxDv = accel * dt;
+        const dvmag = Math.hypot(dvx, dvy) || 1;
+        const scale = dvmag > maxDv ? (maxDv / dvmag) : 1;
 
-        // clamp speed
-        const sp = Math.hypot(vx, vy);
-        if (sp > maxSpeed) {
-          vx = (vx / sp) * maxSpeed;
-          vy = (vy / sp) * maxSpeed;
+        vx += dvx * scale;
+        vy += dvy * scale;
+
+        // Damping toward zero when not fleeing
+        vx -= vx * damping * dt * 0.35;
+        vy -= vy * damping * dt * 0.35;
+
+        // Integrate, but cap per-frame movement
+        let dxStep = vx * dt;
+        let dyStep = vy * dt;
+
+        const stepMag = Math.hypot(dxStep, dyStep) || 1;
+        if (stepMag > maxStep) {
+          dxStep = (dxStep / stepMag) * maxStep;
+          dyStep = (dyStep / stepMag) * maxStep;
         }
 
-        let nx = x + vx * dt;
-        let ny = y + vy * dt;
+        let nx = x + dxStep;
+        let ny = y + dyStep;
 
-        // MUCH smaller bounce
-        const bounce = 0.05;
-
-        if (nx < minX) { nx = minX; vx = -vx * bounce; }
-        if (nx > maxX) { nx = maxX; vx = -vx * bounce; }
-        if (ny < minY) { ny = minY; vy = -vy * bounce; }
-        if (ny > maxY) { ny = maxY; vy = -vy * bounce; }
+        // Clamp to bounds, and ZERO velocity on the axis that hits the wall
+        if (nx < minX) { nx = minX; vx = 0; }
+        if (nx > maxX) { nx = maxX; vx = 0; }
+        if (ny < minY) { ny = minY; vy = 0; }
+        if (ny > maxY) { ny = maxY; vy = 0; }
 
         setPos(nx, ny);
 
@@ -214,14 +247,12 @@
           const dur = 1200 + Math.random() * 1200;
 
           c.style.background = colors[Math.floor(Math.random() * colors.length)];
-          c.style.left = "0";
           c.style.setProperty("--x", xvw + "vw");
           c.style.setProperty("--drift", driftPx + "px");
           c.style.setProperty("--rot", rotDeg + "deg");
           c.style.animationDuration = dur + "ms";
           c.style.animationDelay = (Math.random() * 200) + "ms";
 
-          // vary size a bit
           const w = 6 + Math.random() * 6;
           const h = 10 + Math.random() * 10;
           c.style.width = w + "px";
@@ -252,6 +283,7 @@
   </script>
 </body>
 </html>
+
 
 
 
