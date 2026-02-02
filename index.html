@@ -7,10 +7,17 @@
   <style>
     :root { --pink:#ff5fa2; }
     body{
-      margin:0; height:100vh; display:flex; align-items:center; justify-content:center;
-      background:#fff; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      margin:0;
+      height:100vh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:#fff;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       overflow:hidden;
     }
+
+    /* Pink question box */
     .card{
       width:min(520px, 92vw);
       border:4px solid var(--pink);
@@ -20,18 +27,20 @@
       background:#ffe6f1;
       box-shadow: 0 10px 30px rgba(0,0,0,.08);
       position:relative;
+      z-index:2;
     }
     h1{ margin:0 0 22px; color:#b4004e; font-size:32px; }
-    .btns{
+
+    /* Buttons are laid out nicely, but NO is absolutely positioned */
+    .btnRow{
       position:relative;
-      height:260px;          /* ⬅️ bigger movement zone */
-      width:100%;            /* allow full card width */
+      height:120px;
       display:flex;
       align-items:center;
       justify-content:center;
       gap:18px;
-      overflow:hidden;
     }
+
     button{
       font-size:18px;
       padding:12px 22px;
@@ -43,7 +52,10 @@
       background: var(--pink);
       color:#fff;
       border:0;
+      z-index:3;
     }
+
+    /* The runaway button is positioned in the bigger arena, not in the row */
     #no{
       background:#fff;
       color:#b4004e;
@@ -52,12 +64,26 @@
       left:0;
       top:0;
       will-change: left, top;
+      z-index:3;
     }
+
+    /* 150% x 150% invisible arena around the card */
+    #outerArena{
+      position:absolute;
+      width:150%;
+      height:150%;
+      left:-25%;
+      top:-25%;
+      z-index:1;            /* below the card border but still visible */
+      pointer-events:none;  /* clicks pass through except on the No button itself */
+    }
+
     .huzzah{
       font-size:56px;
       color: var(--pink);
       font-weight:800;
       letter-spacing: 0.5px;
+      z-index:2;
     }
 
     /* Confetti */
@@ -79,46 +105,58 @@
     }
   </style>
 </head>
+
 <body>
+  <!-- The big roaming area (150% of the card). No button lives here. -->
+  <div id="outerArena">
+    <button id="no" type="button">No</button>
+  </div>
+
+  <!-- The pink question card -->
   <div class="card" id="card">
     <h1>Will you be my valentine?</h1>
-    <div class="btns" id="arena">
+    <div class="btnRow">
       <button id="yes" type="button">Yes</button>
-      <button id="no" type="button">No</button>
+      <!-- No button is not here -->
     </div>
   </div>
 
   <script>
     (() => {
-      const arena = document.getElementById("arena");
+      const outerArena = document.getElementById("outerArena");
       const noBtn = document.getElementById("no");
       const yesBtn = document.getElementById("yes");
-      const card  = document.getElementById("card");
+      const card = document.getElementById("card");
 
       // ===== TUNING KNOBS =====
-      const PANIC_RADIUS = 170;     // starts fleeing within this distance (px)
-      const KEEP_OUT = 34;          // extra padding around button where mouse may not enter (px)
-      const MAX_SPEED = 420;        // px/s when very close
-      const ACCEL = 5200;           // px/s^2 (higher = reacts faster)
-      const DAMPING = 7.5;          // higher = smoother / less oscillation
-      const MAX_STEP = 8;           // px per frame cap (prevents cross-box jumps)
+      const PANIC_RADIUS = 190;     // starts fleeing within this distance (px)
+      const KEEP_OUT = 52;          // cursor may never enter this expanded rect around the button (px)
+      const MAX_SPEED = 520;        // px/s when very close
+      const ACCEL = 6500;           // px/s^2 (higher = reacts faster)
+      const DAMPING = 7.0;          // higher = smoother
+      const MAX_STEP = 10;          // px per frame cap (prevents cross-arena jumps)
 
-      const WALL_PAD = 44;          // pushes away from walls within this distance (px)
-      const WALL_PUSH_SPEED = 240;  // how strongly walls repel (px/s target contribution)
+      const WALL_PAD = 70;          // repels from walls within this distance
+      const WALL_PUSH_SPEED = 320;  // target speed contribution from wall repulsion
       // ========================
 
+      // Arena dims, button dims
       let aw=0, ah=0, bw=0, bh=0;
-      let x=0, y=0;                 // top-left (arena coords)
-      let vx=0, vy=0;               // velocity (px/s)
-      let mx=null, my=null;         // mouse (arena coords)
-      let running=true;
-      let lastT=null;
 
-      function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+      // No button state (top-left in arena coords)
+      let x=0, y=0, vx=0, vy=0;
+
+      // Mouse pos in arena coords
+      let mx=null, my=null;
+
+      let running = true;
+      let lastT = null;
+
+      function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 
       function measure() {
-        aw = arena.clientWidth;
-        ah = arena.clientHeight;
+        aw = outerArena.clientWidth;
+        ah = outerArena.clientHeight;
         bw = noBtn.offsetWidth;
         bh = noBtn.offsetHeight;
       }
@@ -131,25 +169,63 @@
 
       function initPos() {
         measure();
-        setPos((aw - bw)/2, (ah - bh)/2);
+
+        // Start near the "No" slot location: roughly aligned with the Yes row,
+        // but inside the larger arena.
+        const cardRect = card.getBoundingClientRect();
+        const arenaRect = outerArena.getBoundingClientRect();
+
+        // Target start: horizontally a bit right of center, vertically around the buttons
+        const startX = (cardRect.left + cardRect.width * 0.62) - arenaRect.left - bw/2;
+        const startY = (cardRect.top  + cardRect.height * 0.64) - arenaRect.top  - bh/2;
+
+        const maxX = Math.max(0, aw - bw);
+        const maxY = Math.max(0, ah - bh);
+
+        setPos(clamp(startX, 0, maxX), clamp(startY, 0, maxY));
         vx = 0; vy = 0;
       }
 
       function updateMouse(clientX, clientY) {
-        const r = arena.getBoundingClientRect();
+        const r = outerArena.getBoundingClientRect();
         mx = clientX - r.left;
         my = clientY - r.top;
       }
 
-      arena.addEventListener("mousemove", (e) => updateMouse(e.clientX, e.clientY), { passive:true });
-      arena.addEventListener("touchmove", (e) => {
+      window.addEventListener("mousemove", (e) => updateMouse(e.clientX, e.clientY), { passive:true });
+      window.addEventListener("touchmove", (e) => {
         const t = e.touches[0];
         updateMouse(t.clientX, t.clientY);
       }, { passive:true });
 
+      function wallTarget(cx, cy) {
+        let tvx = 0, tvy = 0;
+
+        const dL = cx;
+        const dR = aw - cx;
+        const dT = cy;
+        const dB = ah - cy;
+
+        function push(d, ux, uy) {
+          if (d < WALL_PAD) {
+            const s = (WALL_PAD - d) / WALL_PAD;
+            const strength = s*s;
+            tvx += ux * (WALL_PUSH_SPEED * strength);
+            tvy += uy * (WALL_PUSH_SPEED * strength);
+          }
+        }
+
+        push(dL, +1, 0);
+        push(dR, -1, 0);
+        push(dT, 0, +1);
+        push(dB, 0, -1);
+
+        return [tvx, tvy];
+      }
+
       function launchConfetti() {
         const colors = ["#ff5fa2", "#ffd1e6", "#ffffff", "#ff9ac6"];
-        const count = 220;
+        const count = 240;
 
         for (let i = 0; i < count; i++) {
           const c = document.createElement("div");
@@ -175,31 +251,6 @@
         }
       }
 
-      function wallTarget(cx, cy) {
-        let tvx = 0, tvy = 0;
-
-        const dL = cx;
-        const dR = aw - cx;
-        const dT = cy;
-        const dB = ah - cy;
-
-        function push(d, ux, uy) {
-          if (d < WALL_PAD) {
-            const s = (WALL_PAD - d) / WALL_PAD;     // 0..1
-            const strength = s*s;
-            tvx += ux * (WALL_PUSH_SPEED * strength);
-            tvy += uy * (WALL_PUSH_SPEED * strength);
-          }
-        }
-
-        push(dL, +1, 0);
-        push(dR, -1, 0);
-        push(dT, 0, +1);
-        push(dB, 0, -1);
-
-        return [tvx, tvy];
-      }
-
       function tick(t) {
         if (!running) return;
 
@@ -216,12 +267,12 @@
         const cx = x + bw/2;
         const cy = y + bh/2;
 
-        // Determine danger zone (expanded rect)
         let insideKeepOut = false;
         let dist = Infinity;
         let dx = 0, dy = 0;
 
         if (mx !== null && my !== null) {
+          // Danger zone: expanded rect around button
           const left = x - KEEP_OUT;
           const right = x + bw + KEEP_OUT;
           const top = y - KEEP_OUT;
@@ -234,19 +285,18 @@
           dist = Math.hypot(dx, dy) || 1;
         }
 
-        // Target velocity away from cursor
+        // Desired velocity away from mouse
         let targetVx = 0, targetVy = 0;
 
         if (mx !== null && my !== null) {
           const ux = dx / (dist || 1);
           const uy = dy / (dist || 1);
 
-          // Aggressive scaling near the button
           if (dist < PANIC_RADIUS || insideKeepOut) {
-            const s = insideKeepOut ? 1.0 : clamp((PANIC_RADIUS - dist)/PANIC_RADIUS, 0, 1);
+            const s = insideKeepOut ? 1.0 : clamp((PANIC_RADIUS - dist) / PANIC_RADIUS, 0, 1);
 
-            // Stronger than s^2: ramps hard when close
-            const strength = insideKeepOut ? 1.35 : Math.pow(s, 0.35);
+            // Aggressive close-range ramp: very fast when close, calmer at edge
+            const strength = insideKeepOut ? 1.4 : Math.pow(s, 0.28);
 
             const desired = clamp(MAX_SPEED * strength, 0, MAX_SPEED);
             targetVx += ux * desired;
@@ -254,43 +304,43 @@
           }
         }
 
-        // Add wall repulsion target so it can't be corner-pinned
+        // Wall repulsion so it can't be pinned
         const [wvx, wvy] = wallTarget(cx, cy);
         targetVx += wvx;
         targetVy += wvy;
 
-        // Cap target speed
+        // Cap combined target velocity
         const tv = Math.hypot(targetVx, targetVy);
         if (tv > MAX_SPEED) {
           targetVx = (targetVx / tv) * MAX_SPEED;
           targetVy = (targetVy / tv) * MAX_SPEED;
         }
 
-        // If the cursor enters keep-out, make it instantly "slip away"
-        // by boosting current velocity toward target a bit
+        // If cursor invades keep-out, instantly "slip away"
         if (insideKeepOut) {
-          vx = vx * 0.2 + targetVx * 0.8;
-          vy = vy * 0.2 + targetVy * 0.8;
+          vx = vx * 0.15 + targetVx * 0.85;
+          vy = vy * 0.15 + targetVy * 0.85;
         }
 
-        // Accelerate toward target with limit
+        // Accelerate toward target velocity with a limit
         const dvx = targetVx - vx;
         const dvy = targetVy - vy;
         const dv = Math.hypot(dvx, dvy) || 1;
 
         const maxDv = ACCEL * dt;
-        const s = dv > maxDv ? (maxDv / dv) : 1;
+        const scale = dv > maxDv ? (maxDv / dv) : 1;
 
-        vx += dvx * s;
-        vy += dvy * s;
+        vx += dvx * scale;
+        vy += dvy * scale;
 
-        // Damping
-        vx -= vx * DAMPING * dt * 0.25;
-        vy -= vy * DAMPING * dt * 0.25;
+        // Damping for smoothness
+        vx -= vx * DAMPING * dt * 0.22;
+        vy -= vy * DAMPING * dt * 0.22;
 
-        // Integrate with per-frame step cap
+        // Integrate with per-frame movement cap (prevents cross-arena jumps)
         let stepX = vx * dt;
         let stepY = vy * dt;
+
         const step = Math.hypot(stepX, stepY) || 1;
         if (step > MAX_STEP) {
           stepX = (stepX / step) * MAX_STEP;
@@ -300,11 +350,9 @@
         let nx = x + stepX;
         let ny = y + stepY;
 
-        // Clamp, no bounce, no teleport
-        if (nx < minX) { nx = minX; vx = Math.max(0, vx); }
-        if (nx > maxX) { nx = maxX; vx = Math.min(0, vx); }
-        if (ny < minY) { ny = minY; vy = Math.max(0, vy); }
-        if (ny > maxY) { ny = maxY; vy = Math.min(0, vy); }
+        // Clamp, no bouncing
+        nx = clamp(nx, minX, maxX);
+        ny = clamp(ny, minY, maxY);
 
         setPos(nx, ny);
 
@@ -316,11 +364,14 @@
 
       yesBtn.addEventListener("click", () => {
         running = false;
+
+        // Remove card and runaway button
         card.remove();
+        noBtn.remove();
 
         const h = document.createElement("div");
         h.className = "huzzah";
-        h.textContent = "huzzah! more information to come.";
+        h.textContent = "huzzah!";
         document.body.appendChild(h);
 
         launchConfetti();
