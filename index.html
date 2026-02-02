@@ -23,7 +23,7 @@
     h1{ margin:0 0 22px; color:#b4004e; font-size:32px; }
     .btns{
       position:relative;
-      height:110px;
+      height:120px;
       display:flex;
       align-items:center;
       justify-content:center;
@@ -47,17 +47,11 @@
       color:#b4004e;
       border:2px solid #ff9ac6;
       position:absolute;
-      left:50%;
-      top:50%;
-      transform: translate(-50%, -50%);
+      left:0;
+      top:0;
+      transform: translate(0,0);
       will-change: left, top;
-      transition: left 140ms linear, top 140ms linear; /* smoother + slower */
-    }
-    .msg{
-      margin-top:18px;
-      color:#b4004e;
-      font-weight:600;
-      min-height:1.2em;
+      /* IMPORTANT: no CSS transition, we animate ourselves */
     }
     .huzzah{
       font-size:56px;
@@ -75,8 +69,6 @@
       <button id="yes" type="button">Yes</button>
       <button id="no" type="button">No</button>
     </div>
-
-    <div class="msg" id="msg"></div>
   </div>
 
   <script>
@@ -85,70 +77,115 @@
     const yesBtn = document.getElementById("yes");
     const card = document.getElementById("card");
 
-    let noX = 0;
-    let noY = 0;
+    // Button position and velocity in arena coordinates (pixels)
+    let x = 0, y = 0;
+    let vx = 0, vy = 0;
 
-    function clamp(v, lo, hi) {
-      return Math.max(lo, Math.min(hi, v));
+    // Cursor position in viewport coords
+    let mouseX = null, mouseY = null;
+
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    function setPos(nx, ny) {
+      x = nx; y = ny;
+      noBtn.style.left = `${x}px`;
+      noBtn.style.top = `${y}px`;
     }
 
-    function setNoPos(x, y) {
-      noX = x;
-      noY = y;
-      noBtn.style.left = `${noX}px`;
-      noBtn.style.top = `${noY}px`;
-      noBtn.style.transform = "translate(0,0)";
-    }
-
-    function initNoPos() {
+    function initPos() {
       const a = arena.getBoundingClientRect();
       const b = noBtn.getBoundingClientRect();
-      const x = (a.width - b.width) / 2;
-      const y = (a.height - b.height) / 2;
-      setNoPos(x, y);
+      setPos((a.width - b.width) / 2, (a.height - b.height) / 2);
+      vx = 0; vy = 0;
     }
 
-    function moveAway(clientX, clientY) {
-      const a = arena.getBoundingClientRect();
-      const b = noBtn.getBoundingClientRect();
-
-      const bx = b.left + b.width / 2;
-      const by = b.top + b.height / 2;
-
-      const dx = bx - clientX;
-      const dy = by - clientY;
-      const dist = Math.hypot(dx, dy);
-
-      const panicRadius = 140;
-
-      if (dist < panicRadius) {
-        const strength = (panicRadius - dist) / panicRadius;
-
-        const speed = 5.5; // slower than before
-        const ux = dx / (dist || 1);
-        const uy = dy / (dist || 1);
-
-        let nx = noX + ux * speed * strength;
-        let ny = noY + uy * speed * strength;
-
-        nx = clamp(nx, 0, a.width - b.width);
-        ny = clamp(ny, 0, a.height - b.height);
-
-        setNoPos(nx, ny);
-      }
+    function updateMouseFromEvent(clientX, clientY) {
+      mouseX = clientX;
+      mouseY = clientY;
     }
 
-    function onMouseMove(e) { moveAway(e.clientX, e.clientY); }
-    function onTouchMove(e) {
+    arena.addEventListener("mousemove", (e) => updateMouseFromEvent(e.clientX, e.clientY), { passive: true });
+    arena.addEventListener("touchmove", (e) => {
       const t = e.touches[0];
-      moveAway(t.clientX, t.clientY);
-    }
+      updateMouseFromEvent(t.clientX, t.clientY);
+    }, { passive: true });
 
-    arena.addEventListener("mousemove", onMouseMove, { passive: true });
-    arena.addEventListener("touchmove", onTouchMove, { passive: true });
+    // Smooth physics-like animation
+    let lastT = null;
+    function tick(t) {
+      if (lastT === null) lastT = t;
+      // delta time in seconds, clamped for stability
+      const dt = clamp((t - lastT) / 1000, 0, 0.03);
+      lastT = t;
+
+      const a = arena.getBoundingClientRect();
+      const b = noBtn.getBoundingClientRect();
+
+      // Arena bounds for top-left of button
+      const minX = 0;
+      const minY = 0;
+      const maxX = Math.max(0, a.width - b.width);
+      const maxY = Math.max(0, a.height - b.height);
+
+      // Current button centre in viewport coords
+      const btnCenterX = b.left + b.width / 2;
+      const btnCenterY = b.top + b.height / 2;
+
+      // Compute "push" away from cursor when close
+      let ax = 0, ay = 0;
+
+      const panicRadius = 160;   // how close before it reacts
+      const maxAccel = 2200;     // px/s^2 (lower = calmer)
+      const maxSpeed = 320;      // px/s  (lower = slower)
+
+      if (mouseX !== null && mouseY !== null) {
+        const dx = btnCenterX - mouseX;
+        const dy = btnCenterY - mouseY;
+        const dist = Math.hypot(dx, dy) || 1;
+
+        if (dist < panicRadius) {
+          // Smooth ramp: 0 at edge of radius, 1 very close
+          const s = (panicRadius - dist) / panicRadius;
+          // Use s^2 for gentler response until very close
+          const strength = s * s;
+
+          ax = (dx / dist) * (maxAccel * strength);
+          ay = (dy / dist) * (maxAccel * strength);
+        }
+      }
+
+      // Damping (friction) for smoothness
+      const damping = 10.0; // higher = more quickly settles
+      ax += -damping * vx;
+      ay += -damping * vy;
+
+      // Integrate velocity and position
+      vx += ax * dt;
+      vy += ay * dt;
+
+      // Clamp speed
+      const sp = Math.hypot(vx, vy);
+      if (sp > maxSpeed) {
+        vx = (vx / sp) * maxSpeed;
+        vy = (vy / sp) * maxSpeed;
+      }
+
+      let nx = x + vx * dt;
+      let ny = y + vy * dt;
+
+      // Keep inside bounds, bounce slightly if it hits a wall
+      const bounce = 0.2;
+      if (nx < minX) { nx = minX; vx = -vx * bounce; }
+      if (nx > maxX) { nx = maxX; vx = -vx * bounce; }
+      if (ny < minY) { ny = minY; vy = -vy * bounce; }
+      if (ny > maxY) { ny = maxY; vy = -vy * bounce; }
+
+      setPos(nx, ny);
+
+      requestAnimationFrame(tick);
+    }
 
     yesBtn.addEventListener("click", () => {
-      // Remove the question box and show huzzah
       card.remove();
       const h = document.createElement("div");
       h.className = "huzzah";
@@ -156,10 +193,13 @@
       document.body.appendChild(h);
     });
 
-    window.addEventListener("resize", initNoPos);
-    initNoPos();
+    window.addEventListener("resize", initPos);
+
+    initPos();
+    requestAnimationFrame(tick);
   </script>
 </body>
 </html>
+
 
 
