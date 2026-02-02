@@ -24,7 +24,7 @@
     h1{ margin:0 0 22px; color:#b4004e; font-size:32px; }
     .btns{
       position:relative;
-      height:120px;
+      height:130px;
       display:flex;
       align-items:center;
       justify-content:center;
@@ -76,7 +76,7 @@
     }
     @keyframes confetti-fall {
       0%   { transform: translate3d(var(--x), -20px, 0) rotate(0deg); }
-      100% { transform: translate3d(calc(var(--x) + var(--drift)), calc(100vh + 120px), 0) rotate(var(--rot)); }
+      100% { transform: translate3d(calc(var(--x) + var(--drift)), calc(100vh + 140px), 0) rotate(var(--rot)); }
     }
   </style>
 </head>
@@ -97,14 +97,14 @@
       const yesBtn = document.getElementById("yes");
       const card  = document.getElementById("card");
 
-      // Arena and button dimensions (cached, in px)
+      // Dimensions
       let aw = 0, ah = 0, bw = 0, bh = 0;
 
-      // No button position + velocity in arena coordinates (top-left)
+      // No button state in arena coords (top-left) and velocity (px/s)
       let x = 0, y = 0;
       let vx = 0, vy = 0;
 
-      // Mouse in arena coordinates
+      // Mouse in arena coords
       let mx = null, my = null;
 
       let running = true;
@@ -113,7 +113,6 @@
       function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
       function measure() {
-        // Use offsetWidth/Height to avoid layout jitter from getBoundingClientRect per frame
         aw = arena.clientWidth;
         ah = arena.clientHeight;
         bw = noBtn.offsetWidth;
@@ -144,98 +143,9 @@
         updateMouseFromClient(t.clientX, t.clientY);
       }, { passive: true });
 
-      // Smooth local flee: no bouncing, no teleporting
-      function tick(t) {
-        if (!running) return;
-
-        if (lastT === null) lastT = t;
-        const dt = clamp((t - lastT) / 1000, 0, 0.025);
-        lastT = t;
-
-        // Keep measurements fresh if fonts render differently, etc.
-        measure();
-
-        const minX = 0, minY = 0;
-        const maxX = Math.max(0, aw - bw);
-        const maxY = Math.max(0, ah - bh);
-
-        // Button center in arena coords
-        const cx = x + bw / 2;
-        const cy = y + bh / 2;
-
-        // Steering parameters
-        const panicRadius = 120;     // reacts when mouse closer than this
-        const maxSpeed = 120;        // px/s (kept low so it never rockets away)
-        const accel = 900;           // px/s^2
-        const damping = 12;          // velocity smoothing
-        const maxStep = 5;           // px per frame hard cap (prevents big jumps)
-
-        let targetVx = 0, targetVy = 0;
-
-        if (mx !== null && my !== null) {
-          const dx = cx - mx;
-          const dy = cy - my;
-          const dist = Math.hypot(dx, dy) || 1;
-
-          if (dist < panicRadius) {
-            // Smooth ramp: small movement unless very close
-            const s = (panicRadius - dist) / panicRadius; // 0..1
-            const strength = s * s; // gentle until close
-
-            const ux = dx / dist;
-            const uy = dy / dist;
-
-            // Desired speed increases with closeness, but stays local
-            const desiredSpeed = maxSpeed * strength;
-
-            targetVx = ux * desiredSpeed;
-            targetVy = uy * desiredSpeed;
-          }
-        }
-
-        // Move velocity toward target velocity smoothly
-        const dvx = targetVx - vx;
-        const dvy = targetVy - vy;
-
-        // Acceleration limit
-        const maxDv = accel * dt;
-        const dvmag = Math.hypot(dvx, dvy) || 1;
-        const scale = dvmag > maxDv ? (maxDv / dvmag) : 1;
-
-        vx += dvx * scale;
-        vy += dvy * scale;
-
-        // Damping toward zero when not fleeing
-        vx -= vx * damping * dt * 0.35;
-        vy -= vy * damping * dt * 0.35;
-
-        // Integrate, but cap per-frame movement
-        let dxStep = vx * dt;
-        let dyStep = vy * dt;
-
-        const stepMag = Math.hypot(dxStep, dyStep) || 1;
-        if (stepMag > maxStep) {
-          dxStep = (dxStep / stepMag) * maxStep;
-          dyStep = (dyStep / stepMag) * maxStep;
-        }
-
-        let nx = x + dxStep;
-        let ny = y + dyStep;
-
-        // Clamp to bounds, and ZERO velocity on the axis that hits the wall
-        if (nx < minX) { nx = minX; vx = 0; }
-        if (nx > maxX) { nx = maxX; vx = 0; }
-        if (ny < minY) { ny = minY; vy = 0; }
-        if (ny > maxY) { ny = maxY; vy = 0; }
-
-        setPos(nx, ny);
-
-        requestAnimationFrame(tick);
-      }
-
       function launchConfetti() {
         const colors = ["#ff5fa2", "#ffd1e6", "#ffffff", "#ff9ac6"];
-        const count = 200;
+        const count = 220;
 
         for (let i = 0; i < count; i++) {
           const c = document.createElement("div");
@@ -263,6 +173,144 @@
         }
       }
 
+      // Core update: smooth, cannot be trapped, cannot be touched
+      function tick(t) {
+        if (!running) return;
+
+        if (lastT === null) lastT = t;
+        const dt = clamp((t - lastT) / 1000, 0, 0.03);
+        lastT = t;
+
+        measure();
+
+        const minX = 0, minY = 0;
+        const maxX = Math.max(0, aw - bw);
+        const maxY = Math.max(0, ah - bh);
+
+        // Center of the No button (arena coords)
+        const cx = x + bw / 2;
+        const cy = y + bh / 2;
+
+        // Parameters
+        const panicRadius = 140;       // start fleeing here
+        const touchMargin = 18;        // never allow cursor within this of button rect
+        const maxSpeed = 260;          // px/s
+        const accel = 2200;            // px/s^2
+        const damping = 8.5;           // smoothness
+        const maxStep = 9;             // px per frame cap (prevents jumps)
+
+        // Wall repulsion: prevents corner trapping
+        const wallPadding = 26;        // start pushing away near walls
+        const wallStrength = 2200;     // px/s^2
+
+        // Start with target velocity 0
+        let targetVx = 0, targetVy = 0;
+
+        // Mouse avoidance (scales strongly with closeness)
+        let insideDanger = false;
+
+        if (mx !== null && my !== null) {
+          // Distance to button rectangle (expanded by touchMargin)
+          const left = x - touchMargin;
+          const right = x + bw + touchMargin;
+          const top = y - touchMargin;
+          const bottom = y + bh + touchMargin;
+
+          // If mouse is inside the expanded rect, treat as "touching"
+          insideDanger = (mx >= left && mx <= right && my >= top && my <= bottom);
+
+          const dx = cx - mx;
+          const dy = cy - my;
+          const dist = Math.hypot(dx, dy) || 1;
+
+          if (dist < panicRadius || insideDanger) {
+            const ux = dx / dist;
+            const uy = dy / dist;
+
+            // Strength ramps smoothly, but becomes huge if "touching"
+            const s = insideDanger ? 1.0 : (panicRadius - dist) / panicRadius;
+            const strength = insideDanger ? 1.25 : (s * s);
+
+            // desired speed depends on closeness
+            const desiredSpeed = clamp(maxSpeed * strength, 0, maxSpeed);
+
+            targetVx += ux * desiredSpeed;
+            targetVy += uy * desiredSpeed;
+          }
+        }
+
+        // Wall repulsion (push toward center when near edges)
+        // Compute how close the button is to each wall (using its center)
+        const distLeft = cx;
+        const distRight = aw - cx;
+        const distTop = cy;
+        const distBottom = ah - cy;
+
+        // If within wallPadding, add a push away from that wall
+        function wallPush(d, ux, uy) {
+          if (d < wallPadding) {
+            const s = (wallPadding - d) / wallPadding; // 0..1
+            const strength = s * s;
+            // Convert this "force" into an extra target velocity direction
+            targetVx += ux * (maxSpeed * 0.75 * strength);
+            targetVy += uy * (maxSpeed * 0.75 * strength);
+          }
+        }
+
+        wallPush(distLeft, +1, 0);
+        wallPush(distRight, -1, 0);
+        wallPush(distTop, 0, +1);
+        wallPush(distBottom, 0, -1);
+
+        // Cap combined target velocity
+        const tv = Math.hypot(targetVx, targetVy);
+        if (tv > maxSpeed) {
+          targetVx = (targetVx / tv) * maxSpeed;
+          targetVy = (targetVy / tv) * maxSpeed;
+        }
+
+        // Smoothly move current velocity toward target (with acceleration limit)
+        const dvx = targetVx - vx;
+        const dvy = targetVy - vy;
+        const dv = Math.hypot(dvx, dvy) || 1;
+        const maxDv = accel * dt;
+        const s = dv > maxDv ? (maxDv / dv) : 1;
+
+        vx += dvx * s;
+        vy += dvy * s;
+
+        // Damping
+        vx -= vx * damping * dt * 0.35;
+        vy -= vy * damping * dt * 0.35;
+
+        // Integrate position with per-frame movement cap
+        let dxStep = vx * dt;
+        let dyStep = vy * dt;
+
+        const step = Math.hypot(dxStep, dyStep) || 1;
+        if (step > maxStep) {
+          dxStep = (dxStep / step) * maxStep;
+          dyStep = (dyStep / step) * maxStep;
+        }
+
+        let nx = x + dxStep;
+        let ny = y + dyStep;
+
+        // Clamp to bounds, no bouncing, no flips
+        if (nx < minX) { nx = minX; vx = Math.max(0, vx); }
+        if (nx > maxX) { nx = maxX; vx = Math.min(0, vx); }
+        if (ny < minY) { ny = minY; vy = Math.max(0, vy); }
+        if (ny > maxY) { ny = maxY; vy = Math.min(0, vy); }
+
+        setPos(nx, ny);
+
+        // If cursor is in the danger zone, also disable pointer events on No,
+        // so the mouse never "touches" it (no hover, no click).
+        noBtn.style.pointerEvents = insideDanger ? "none" : "auto";
+
+        requestAnimationFrame(tick);
+      }
+
       yesBtn.addEventListener("click", () => {
         running = false;
         card.remove();
@@ -283,6 +331,7 @@
   </script>
 </body>
 </html>
+
 
 
 
