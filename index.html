@@ -9,6 +9,7 @@
     body{
       margin:0; height:100vh; display:flex; align-items:center; justify-content:center;
       background:#fff; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      overflow:hidden;
     }
     .card{
       width:min(520px, 92vw);
@@ -57,6 +58,26 @@
       font-weight:800;
       letter-spacing: 0.5px;
     }
+
+    /* Confetti */
+    .confetti {
+      position: fixed;
+      top: -20px;
+      left: 0;
+      width: 10px;
+      height: 16px;
+      border-radius: 2px;
+      z-index: 9999;
+      pointer-events: none;
+      opacity: 0.95;
+      animation-name: confetti-fall;
+      animation-timing-function: linear;
+      animation-fill-mode: forwards;
+    }
+    @keyframes confetti-fall {
+      0%   { transform: translate3d(var(--x), -20px, 0) rotate(0deg); }
+      100% { transform: translate3d(calc(var(--x) + var(--drift)), calc(100vh + 120px), 0) rotate(var(--rot)); }
+    }
   </style>
 </head>
 <body>
@@ -76,17 +97,11 @@
       const yesBtn = document.getElementById("yes");
       const card  = document.getElementById("card");
 
-      if (!arena || !noBtn || !yesBtn || !card) {
-        // If any IDs don't match, nothing will work.
-        console.error("Missing element: check ids arena/no/yes/card");
-        return;
-      }
-
-      // Button position and velocity (pixels in arena coords)
+      // No button physics
       let x = 0, y = 0;
       let vx = 0, vy = 0;
 
-      // Cursor position in viewport coords
+      // cursor pos (viewport)
       let mouseX = null, mouseY = null;
 
       let running = true;
@@ -132,16 +147,14 @@
         const maxX = Math.max(0, a.width - b.width);
         const maxY = Math.max(0, a.height - b.height);
 
-        // Button centre in viewport coords
         const btnCenterX = b.left + b.width / 2;
         const btnCenterY = b.top  + b.height / 2;
 
-        // Smooth acceleration away from cursor
         let ax = 0, ay = 0;
 
-        const panicRadius = 160; // reacts within this distance
-        const maxAccel = 1400;   // lower = calmer
-        const maxSpeed = 220;    // lower = slower
+        const panicRadius = 160;
+        const maxAccel = 1300;   // lower = calmer
+        const maxSpeed = 210;    // lower = slower
 
         if (mouseX !== null && mouseY !== null) {
           const dx = btnCenterX - mouseX;
@@ -149,23 +162,22 @@
           const dist = Math.hypot(dx, dy) || 1;
 
           if (dist < panicRadius) {
-            const s = (panicRadius - dist) / panicRadius; // 0..1
-            const strength = s * s; // gentler ramp
+            const s = (panicRadius - dist) / panicRadius;
+            const strength = s * s; // smooth ramp
             ax = (dx / dist) * (maxAccel * strength);
             ay = (dy / dist) * (maxAccel * strength);
           }
         }
 
-        // Damping for smooth glide
-        const damping = 10.0;
+        // damping (smooth glide)
+        const damping = 10.5;
         ax += -damping * vx;
         ay += -damping * vy;
 
-        // Integrate
         vx += ax * dt;
         vy += ay * dt;
 
-        // Clamp speed
+        // clamp speed
         const sp = Math.hypot(vx, vy);
         if (sp > maxSpeed) {
           vx = (vx / sp) * maxSpeed;
@@ -175,53 +187,53 @@
         let nx = x + vx * dt;
         let ny = y + vy * dt;
 
-        // Keep inside bounds with tiny bounce
-        const bounce = 0.2;
+        // MUCH smaller bounce
+        const bounce = 0.05;
+
         if (nx < minX) { nx = minX; vx = -vx * bounce; }
         if (nx > maxX) { nx = maxX; vx = -vx * bounce; }
         if (ny < minY) { ny = minY; vy = -vy * bounce; }
         if (ny > maxY) { ny = maxY; vy = -vy * bounce; }
 
         setPos(nx, ny);
+
         requestAnimationFrame(tick);
       }
 
-      function confetti() {
+      function launchConfetti() {
         const colors = ["#ff5fa2", "#ffd1e6", "#ffffff", "#ff9ac6"];
-        const count = 180;
+        const count = 200;
 
         for (let i = 0; i < count; i++) {
-          const piece = document.createElement("div");
-          piece.style.position = "fixed";
-          piece.style.left = Math.random() * 100 + "vw";
-          piece.style.top = "-20px";
-          piece.style.width = "8px";
-          piece.style.height = "14px";
-          piece.style.background = colors[Math.floor(Math.random() * colors.length)];
-          piece.style.opacity = "0.95";
-          piece.style.zIndex = "9999";
-          piece.style.borderRadius = "2px";
-          document.body.appendChild(piece);
+          const c = document.createElement("div");
+          c.className = "confetti";
 
-          const fall = window.innerHeight + 120;
-          const drift = (Math.random() - 0.5) * 320;
-          const rotate = Math.random() * 720;
+          const xvw = Math.random() * 100;
+          const driftPx = (Math.random() - 0.5) * 360;
+          const rotDeg = (Math.random() * 900 + 360) * (Math.random() < 0.5 ? -1 : 1);
+          const dur = 1200 + Math.random() * 1200;
 
-          piece.animate(
-            [
-              { transform: "translate(0,0) rotate(0deg)", top: "-20px" },
-              { transform: `translate(${drift}px,0) rotate(${rotate}deg)`, top: fall + "px" }
-            ],
-            {
-              duration: 1400 + Math.random() * 900,
-              easing: "cubic-bezier(.2,.8,.2,1)"
-            }
-          ).onfinish = () => piece.remove();
+          c.style.background = colors[Math.floor(Math.random() * colors.length)];
+          c.style.left = "0";
+          c.style.setProperty("--x", xvw + "vw");
+          c.style.setProperty("--drift", driftPx + "px");
+          c.style.setProperty("--rot", rotDeg + "deg");
+          c.style.animationDuration = dur + "ms";
+          c.style.animationDelay = (Math.random() * 200) + "ms";
+
+          // vary size a bit
+          const w = 6 + Math.random() * 6;
+          const h = 10 + Math.random() * 10;
+          c.style.width = w + "px";
+          c.style.height = h + "px";
+
+          document.body.appendChild(c);
+          c.addEventListener("animationend", () => c.remove());
         }
       }
 
       yesBtn.addEventListener("click", () => {
-        running = false; // stop the animation loop cleanly
+        running = false;
         card.remove();
 
         const h = document.createElement("div");
@@ -229,7 +241,7 @@
         h.textContent = "huzzah!";
         document.body.appendChild(h);
 
-        confetti();
+        launchConfetti();
       });
 
       window.addEventListener("resize", initPos);
@@ -240,5 +252,6 @@
   </script>
 </body>
 </html>
+
 
 
