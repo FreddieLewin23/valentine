@@ -31,6 +31,7 @@
     }
     h1{ margin:0 0 22px; color:#b4004e; font-size:32px; }
 
+    /* Buttons are laid out nicely, but NO is absolutely positioned */
     .btnRow{
       position:relative;
       height:120px;
@@ -47,25 +48,34 @@
       cursor:pointer;
       user-select:none;
     }
-
     #yes{
       background: var(--pink);
       color:#fff;
       border:0;
       z-index:3;
-      position:relative;
     }
 
-    /* The runaway button lives in viewport space */
+    /* The runaway button is positioned in the bigger arena, not in the row */
     #no{
       background:#fff;
       color:#b4004e;
       border:2px solid #ff9ac6;
-      position:fixed;
+      position:absolute;
       left:0;
       top:0;
       will-change: left, top;
       z-index:3;
+    }
+
+    /* 150% x 150% invisible arena around the card */
+    #outerArena{
+      position:absolute;
+      width:150%;
+      height:150%;
+      left:-25%;
+      top:-25%;
+      z-index:1;            /* below the card border but still visible */
+      pointer-events:none;  /* clicks pass through except on the No button itself */
     }
 
     .huzzah{
@@ -97,63 +107,58 @@
 </head>
 
 <body>
-  <button id="no" type="button">No</button>
+  <!-- The big roaming area (150% of the card). No button lives here. -->
+  <div id="outerArena">
+    <button id="no" type="button">No</button>
+  </div>
 
+  <!-- The pink question card -->
   <div class="card" id="card">
     <h1>Will you be my valentine?</h1>
     <div class="btnRow">
       <button id="yes" type="button">Yes</button>
+      <!-- No button is not here -->
     </div>
   </div>
 
   <script>
     (() => {
+      const outerArena = document.getElementById("outerArena");
       const noBtn = document.getElementById("no");
       const yesBtn = document.getElementById("yes");
-      const card  = document.getElementById("card");
+      const card = document.getElementById("card");
 
-      // ===== CHAOS TUNING =====
-      // The roaming rectangle is 150% of the viewport.
-      // That means it can go 25% off each side.
-      const OVERSCAN = 0.25;        // 0.25 => 150% roaming region
-      const PANIC_RADIUS = 210;     // starts fleeing within this distance (px)
-      const KEEP_OUT = 60;          // cursor may never enter this expanded rect around button (px)
+      // ===== TUNING KNOBS =====
+      const PANIC_RADIUS = 190;     // starts fleeing within this distance (px)
+      const KEEP_OUT = 52;          // cursor may never enter this expanded rect around the button (px)
+      const MAX_SPEED = 520;        // px/s when very close
+      const ACCEL = 6500;           // px/s^2 (higher = reacts faster)
+      const DAMPING = 7.0;          // higher = smoother
+      const MAX_STEP = 10;          // px per frame cap (prevents cross-arena jumps)
 
-      const MAX_SPEED = 620;        // px/s when very close
-      const ACCEL = 8500;           // px/s^2, higher = reacts faster
-      const DAMPING = 6.5;          // higher = smoother
-      const MAX_STEP = 14;          // px per frame cap, prevents teleport jumps
-
-      const WALL_PAD = 90;          // repels from roaming bounds to prevent corner trapping
-      const WALL_PUSH_SPEED = 420;  // target speed contribution from wall repulsion
+      const WALL_PAD = 70;          // repels from walls within this distance
+      const WALL_PUSH_SPEED = 320;  // target speed contribution from wall repulsion
       // ========================
 
-      let bw = 0, bh = 0;
-      let x = 0, y = 0;             // top-left in viewport coords
-      let vx = 0, vy = 0;           // px/s
-      let mx = null, my = null;     // mouse in viewport coords
+      // Arena dims, button dims
+      let aw=0, ah=0, bw=0, bh=0;
+
+      // No button state (top-left in arena coords)
+      let x=0, y=0, vx=0, vy=0;
+
+      // Mouse pos in arena coords
+      let mx=null, my=null;
 
       let running = true;
       let lastT = null;
 
-      function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+      function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 
       function measure() {
+        aw = outerArena.clientWidth;
+        ah = outerArena.clientHeight;
         bw = noBtn.offsetWidth;
         bh = noBtn.offsetHeight;
-      }
-
-      function bounds() {
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
-
-        // Roaming area is 150% of viewport, centered on viewport.
-        const minX = -OVERSCAN * vw;
-        const minY = -OVERSCAN * vh;
-        const maxX = (1 + OVERSCAN) * vw - bw;
-        const maxY = (1 + OVERSCAN) * vh - bh;
-
-        return { vw, vh, minX, minY, maxX, maxY };
       }
 
       function setPos(nx, ny) {
@@ -165,34 +170,46 @@
       function initPos() {
         measure();
 
-        // Start near where a "No" would be next to Yes (roughly)
+        // Start near the "No" slot location: roughly aligned with the Yes row,
+        // but inside the larger arena.
         const cardRect = card.getBoundingClientRect();
-        const startX = cardRect.left + cardRect.width * 0.62 - bw / 2;
-        const startY = cardRect.top  + cardRect.height * 0.64 - bh / 2;
+        const arenaRect = outerArena.getBoundingClientRect();
 
-        const b = bounds();
-        setPos(clamp(startX, b.minX, b.maxX), clamp(startY, b.minY, b.maxY));
+        // Target start: horizontally a bit right of center, vertically around the buttons
+        const startX = (cardRect.left + cardRect.width * 0.62) - arenaRect.left - bw/2;
+        const startY = (cardRect.top  + cardRect.height * 0.64) - arenaRect.top  - bh/2;
+
+        const maxX = Math.max(0, aw - bw);
+        const maxY = Math.max(0, ah - bh);
+
+        setPos(clamp(startX, 0, maxX), clamp(startY, 0, maxY));
         vx = 0; vy = 0;
       }
 
-      window.addEventListener("mousemove", (e) => { mx = e.clientX; my = e.clientY; }, { passive:true });
+      function updateMouse(clientX, clientY) {
+        const r = outerArena.getBoundingClientRect();
+        mx = clientX - r.left;
+        my = clientY - r.top;
+      }
+
+      window.addEventListener("mousemove", (e) => updateMouse(e.clientX, e.clientY), { passive:true });
       window.addEventListener("touchmove", (e) => {
         const t = e.touches[0];
-        mx = t.clientX; my = t.clientY;
+        updateMouse(t.clientX, t.clientY);
       }, { passive:true });
 
-      function wallTarget(cx, cy, b) {
+      function wallTarget(cx, cy) {
         let tvx = 0, tvy = 0;
 
-        const dL = cx - b.minX;
-        const dR = b.maxX - cx;
-        const dT = cy - b.minY;
-        const dB = b.maxY - cy;
+        const dL = cx;
+        const dR = aw - cx;
+        const dT = cy;
+        const dB = ah - cy;
 
         function push(d, ux, uy) {
           if (d < WALL_PAD) {
             const s = (WALL_PAD - d) / WALL_PAD;
-            const strength = s * s;
+            const strength = s*s;
             tvx += ux * (WALL_PUSH_SPEED * strength);
             tvy += uy * (WALL_PUSH_SPEED * strength);
           }
@@ -208,7 +225,7 @@
 
       function launchConfetti() {
         const colors = ["#ff5fa2", "#ffd1e6", "#ffffff", "#ff9ac6"];
-        const count = 260;
+        const count = 240;
 
         for (let i = 0; i < count; i++) {
           const c = document.createElement("div");
@@ -226,8 +243,8 @@
           c.style.animationDuration = dur + "ms";
           c.style.animationDelay = (Math.random() * 200) + "ms";
 
-          c.style.width = (6 + Math.random() * 6) + "px";
-          c.style.height = (10 + Math.random() * 10) + "px";
+          c.style.width = (6 + Math.random()*6) + "px";
+          c.style.height = (10 + Math.random()*10) + "px";
 
           document.body.appendChild(c);
           c.addEventListener("animationend", () => c.remove());
@@ -238,21 +255,24 @@
         if (!running) return;
 
         if (lastT === null) lastT = t;
-        const dt = clamp((t - lastT) / 1000, 0, 0.03);
+        const dt = clamp((t - lastT)/1000, 0, 0.03);
         lastT = t;
 
         measure();
-        const b = bounds();
 
-        const cx = x + bw / 2;
-        const cy = y + bh / 2;
+        const minX = 0, minY = 0;
+        const maxX = Math.max(0, aw - bw);
+        const maxY = Math.max(0, ah - bh);
 
-        // Danger zone check: expanded rect around button in viewport coords
+        const cx = x + bw/2;
+        const cy = y + bh/2;
+
         let insideKeepOut = false;
         let dist = Infinity;
         let dx = 0, dy = 0;
 
         if (mx !== null && my !== null) {
+          // Danger zone: expanded rect around button
           const left = x - KEEP_OUT;
           const right = x + bw + KEEP_OUT;
           const top = y - KEEP_OUT;
@@ -265,7 +285,7 @@
           dist = Math.hypot(dx, dy) || 1;
         }
 
-        // Desired velocity away from cursor
+        // Desired velocity away from mouse
         let targetVx = 0, targetVy = 0;
 
         if (mx !== null && my !== null) {
@@ -275,8 +295,8 @@
           if (dist < PANIC_RADIUS || insideKeepOut) {
             const s = insideKeepOut ? 1.0 : clamp((PANIC_RADIUS - dist) / PANIC_RADIUS, 0, 1);
 
-            // Very aggressive close-range ramp (fast when close, calmer at edge)
-            const strength = insideKeepOut ? 1.6 : Math.pow(s, 0.22);
+            // Aggressive close-range ramp: very fast when close, calmer at edge
+            const strength = insideKeepOut ? 1.4 : Math.pow(s, 0.28);
 
             const desired = clamp(MAX_SPEED * strength, 0, MAX_SPEED);
             targetVx += ux * desired;
@@ -284,25 +304,25 @@
           }
         }
 
-        // Add wall repulsion so it cannot be pinned at roaming bounds
-        const [wvx, wvy] = wallTarget(cx, cy, b);
+        // Wall repulsion so it can't be pinned
+        const [wvx, wvy] = wallTarget(cx, cy);
         targetVx += wvx;
         targetVy += wvy;
 
-        // Cap combined target speed
+        // Cap combined target velocity
         const tv = Math.hypot(targetVx, targetVy);
         if (tv > MAX_SPEED) {
           targetVx = (targetVx / tv) * MAX_SPEED;
           targetVy = (targetVy / tv) * MAX_SPEED;
         }
 
-        // If cursor invades keep-out, instantly shove velocity toward target
+        // If cursor invades keep-out, instantly "slip away"
         if (insideKeepOut) {
-          vx = vx * 0.1 + targetVx * 0.9;
-          vy = vy * 0.1 + targetVy * 0.9;
+          vx = vx * 0.15 + targetVx * 0.85;
+          vy = vy * 0.15 + targetVy * 0.85;
         }
 
-        // Accelerate toward target with limit
+        // Accelerate toward target velocity with a limit
         const dvx = targetVx - vx;
         const dvy = targetVy - vy;
         const dv = Math.hypot(dvx, dvy) || 1;
@@ -314,10 +334,10 @@
         vy += dvy * scale;
 
         // Damping for smoothness
-        vx -= vx * DAMPING * dt * 0.20;
-        vy -= vy * DAMPING * dt * 0.20;
+        vx -= vx * DAMPING * dt * 0.22;
+        vy -= vy * DAMPING * dt * 0.22;
 
-        // Integrate with per-frame cap so it never "teleports"
+        // Integrate with per-frame movement cap (prevents cross-arena jumps)
         let stepX = vx * dt;
         let stepY = vy * dt;
 
@@ -330,9 +350,9 @@
         let nx = x + stepX;
         let ny = y + stepY;
 
-        // Clamp to roaming bounds, no bouncing
-        nx = clamp(nx, b.minX, b.maxX);
-        ny = clamp(ny, b.minY, b.maxY);
+        // Clamp, no bouncing
+        nx = clamp(nx, minX, maxX);
+        ny = clamp(ny, minY, maxY);
 
         setPos(nx, ny);
 
@@ -345,6 +365,7 @@
       yesBtn.addEventListener("click", () => {
         running = false;
 
+        // Remove card and runaway button
         card.remove();
         noBtn.remove();
 
